@@ -48,7 +48,7 @@
   const yOf = (L, fy) => L.top + fy * L.h;
 
   /* ---------- scroll-scrubbed frame sequences on canvas ---------- */
-  const V = '?v=4';
+  const V = '?v=5';
   const range = (dir, n) => Array.from({ length: n }, (_, i) => `assets/seq/${dir}${PORTRAIT ? '-m' : ''}/${String(i + 1).padStart(3, '0')}.webp${V}`);
   const ok = im => im && im.complete && im.naturalWidth;
   class Seq {
@@ -66,6 +66,7 @@
     draw() {
       const i = Math.max(0, Math.min(this.frames.length - 1, Math.round(this.f)));
       if (i === this.last) return;
+      if (this.started && !this.frames[i]) this.load(i); // jumped ahead: fetch this frame first
       const img = this.near(i); if (!img) return;
       const cw = this.c.width, ch = this.c.height, iw = img.naturalWidth, ih = img.naturalHeight;
       const s = Math.max(cw / iw, ch / ih, cw / (2 * Math.min(this.fx, 1 - this.fx)) / iw, ch / (2 * Math.min(this.fy, 1 - this.fy)) / ih);
@@ -84,8 +85,13 @@
         im.src = this.src[i];
       });
     }
+    prefetch(step) { // a few evenly spaced frames, so a jump never lands on the poster photo
+      const jobs = []; for (let i = 0; i < this.src.length; i += step) jobs.push(this.load(i));
+      jobs.push(this.load(this.src.length - 1)); return Promise.all(jobs);
+    }
     async start() { // coarse pass (every 4th frame) then fill in
       if (this.started) return; this.started = true;
+      const i0 = Math.max(0, Math.min(this.src.length - 1, Math.round(this.f))); await this.load(i0);
       const coarse = []; for (let i = 0; i < this.src.length; i += 4) coarse.push(i); coarse.push(this.src.length - 1);
       for (let k = 0; k < coarse.length; k += 6) await Promise.all(coarse.slice(k, k + 6).map(i => this.load(i)));
       for (let i = 0; i < this.src.length; i++) if (!this.frames[i]) await this.load(i);
@@ -98,7 +104,12 @@
   const SEQS = [heroSeq, pourSeq, dropSeq];
   const sizeCanvas = () => SEQS.forEach(q => q.size());
   // hero: first frame, then the rest. pour/drop: lazy, when their section gets close (see onProgress)
-  heroSeq.load(0).then(() => { hideLoader(); heroSeq.start(); });
+  const idle = cb => (window.requestIdleCallback ? requestIdleCallback(cb, { timeout: 2500 }) : setTimeout(cb, 1200));
+  heroSeq.load(0).then(() => {
+    hideLoader(); heroSeq.start();
+    // light prefetch (every 8th frame, ~16 small files) of the later scenes once the hero is up
+    idle(() => pourSeq.prefetch(8).then(() => dropSeq.prefetch(8)));
+  });
   setTimeout(hideLoader, 5000);
 
   /* ---------- bubbles ---------- */
@@ -174,7 +185,7 @@
     // match cut → 02 THE BLOOM (camera travels down)
       .to(canvas, { yPercent: -45, autoAlpha: 0, duration: XF * 2, ease: 'power1.inOut' }, 3.85)
       .fromTo('#L-pour', { autoAlpha: 0, yPercent: 40 }, { autoAlpha: 1, yPercent: 0, duration: XF * 2, ease: 'power1.inOut' }, 3.85)
-      .to(thread, { scaleY: () => Math.max(0, (G.dripTop - G.T) / G.H), duration: XF * 2, ease: 'power1.inOut' }, 3.85)
+      .to(thread, { opacity: 0, duration: 0.25 }, 3.85) // off as soon as THE BLOOM enters (the kettle stream takes over)
       .fromTo('.s3', { opacity: 0 }, { opacity: 1, duration: 0.01 }, 4.4)
       .from('.s3 .ln>span', { yPercent: 105, duration: 0.45, stagger: 0.12, ease: 'power3.out' }, 4.4)
       .from('.s3 .label', { opacity: 0, x: -20, duration: 0.35 }, 4.4)
@@ -185,8 +196,6 @@
       .fromTo('#L-pour canvas', { scale: 1.0 }, { scale: 1.07, duration: 2.1, transformOrigin: '57% 45%' }, 4.0)
       .fromTo('.steam', { autoAlpha: 0, y: 30 }, { autoAlpha: 0.8, y: -40, duration: 1.4 }, 4.3)
       .to('.steam', { autoAlpha: 0, y: -90, duration: 0.6 }, 5.7)
-      .to(thread, { opacity: 0.9, duration: 0.2, onStart: () => thread.className = 'thread', onReverseComplete: () => thread.className = 'thread grounds' }, 4.5)
-      .to(thread, { opacity: 0, duration: 0.4 }, 4.9)
     // match cut → EVERY DROP (the thread stays hidden while the camera travels)
       .to('.s3', { opacity: 0, y: -50, duration: 0.4 }, 5.9)
       .to('#L-pour', { yPercent: -70, scale: 1.08, duration: XF * 2 + .2, ease: 'power1.inOut' }, 6.0)
