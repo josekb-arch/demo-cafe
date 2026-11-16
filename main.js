@@ -27,52 +27,52 @@
   }
   const yOf = (L, fy) => L.top + fy * L.h;
 
-  /* ---------- scroll-scrubbed frame sequence (beans fill + grinder explode) ---------- */
-  const canvas = $('#seq'), ctx = canvas.getContext('2d');
-  const SRC = [];
-  for (let i = 1; i <= 71; i++) SRC.push(`assets/seq/fill/${String(i).padStart(3, '0')}.webp`);
-  for (let i = 1; i <= 85; i++) SRC.push(`assets/seq/grind/${String(i).padStart(3, '0')}.webp`);
-  const frames = new Array(SRC.length);
-  const seq = { f: 0 };
-  let lastDrawn = -1;
-  function sizeCanvas() {
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr;
-    lastDrawn = -1; draw();
-  }
+  /* ---------- scroll-scrubbed frame sequences (canvas, cover + focal point) ---------- */
+  const V = '?v=3';
+  const range = (dir, n) => Array.from({ length: n }, (_, i) => `assets/seq/${dir}/${String(i + 1).padStart(3, '0')}.webp${V}`);
   const ok = im => im && im.complete && im.naturalWidth;
-  function nearestLoaded(i) {
-    for (let d = 0; d < frames.length; d++) {
-      if (ok(frames[i - d])) return frames[i - d];
-      if (ok(frames[i + d])) return frames[i + d];
+  class Seq {
+    constructor(canvas, src, fx = 0.5, fy = 0.5) {
+      this.c = canvas; this.ctx = canvas.getContext('2d'); this.src = src; this.fx = fx; this.fy = fy;
+      this.frames = new Array(src.length); this.f = 0; this.last = -1;
+    }
+    size() { const d = Math.min(devicePixelRatio || 1, 2); this.c.width = innerWidth * d; this.c.height = innerHeight * d; this.last = -1; this.draw(); }
+    near(i) { for (let d = 0; d < this.frames.length; d++) { if (ok(this.frames[i - d])) return this.frames[i - d]; if (ok(this.frames[i + d])) return this.frames[i + d]; } }
+    draw() {
+      const i = Math.max(0, Math.min(this.frames.length - 1, Math.round(this.f)));
+      if (i === this.last) return;
+      const img = this.near(i); if (!img) return;
+      const cw = this.c.width, ch = this.c.height, iw = img.naturalWidth, ih = img.naturalHeight;
+      const s = Math.max(cw / iw, ch / ih, cw / (2 * Math.min(this.fx, 1 - this.fx)) / iw, ch / (2 * Math.min(this.fy, 1 - this.fy)) / ih);
+      const w = iw * s, h = ih * s;
+      this.ctx.drawImage(img, cw / 2 - this.fx * w, ch / 2 - this.fy * h, w, h);
+      if (img === this.frames[i]) this.last = i;
+    }
+    load(i) {
+      return new Promise(res => {
+        if (this.frames[i]) return res();
+        const im = new Image(); im.decoding = 'async'; this.frames[i] = im;
+        im.onload = im.onerror = () => { bump(); if (Math.abs(i - this.f) < 4) { this.last = -1; this.draw(); } res(); };
+        im.src = this.src[i];
+      });
     }
   }
-  function draw() {
-    const i = Math.max(0, Math.min(frames.length - 1, Math.round(seq.f)));
-    if (i === lastDrawn) return;
-    const img = nearestLoaded(i); if (!img) return;
-    const cw = canvas.width, ch = canvas.height;
-    const s = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
-    const w = img.naturalWidth * s, h = img.naturalHeight * s;
-    ctx.fillStyle = '#e2e1dd'; ctx.fillRect(0, 0, cw, ch);
-    ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
-    if (img === frames[i]) lastDrawn = i;
-  }
+  const canvas = $('#seq');
+  const heroSeq = new Seq(canvas, [...range('fill', 71), ...range('grind', 85)]);
+  const pourSeq = new Seq($('#L-pour canvas'), range('pour', 85), 0.572, 0.5);
+  const dropSeq = new Seq($('#L-drop canvas'), range('drop', 85), 0.505, 0.5);
+  const SEQS = [heroSeq, pourSeq, dropSeq];
+  const seq = heroSeq, draw = () => heroSeq.draw();
+  const SRC = heroSeq.src;
+  function sizeCanvas() { SEQS.forEach(q => q.size()); }
   const loader = $('#loader');
-  let loaded = 0;
-  function load(i) {
-    return new Promise(res => {
-      if (frames[i]) return res();
-      const im = new Image(); im.decoding = 'async';
-      frames[i] = im;
-      im.onload = im.onerror = () => { loaded++; loader.style.setProperty('--p', Math.min(1, loaded / 40)); if (Math.abs(i - seq.f) < 3) { lastDrawn = -1; draw(); } res(); };
-      im.src = SRC[i];
-    });
-  }
-  const first = []; for (let i = 0; i < SRC.length; i += 4) first.push(i);
-  Promise.all(first.map(load)).then(() => {
-    loader.classList.add('done'); lastDrawn = -1; draw();
-    (async () => { for (let i = 0; i < SRC.length; i++) await load(i); })();
+  let loaded = 0; const bump = () => { loaded++; loader.style.setProperty('--p', Math.min(1, loaded / 40)); };
+  // pass 1: first frame of every scene + every 4th frame; pass 2: everything, all scenes in parallel
+  const pass1 = [];
+  SEQS.forEach(q => { for (let i = 0; i < q.src.length; i += 4) pass1.push(q.load(i)); pass1.push(q.load(q.src.length - 1)); });
+  Promise.all(pass1).then(() => {
+    loader.classList.add('done');
+    SEQS.forEach(q => { q.last = -1; q.draw(); (async () => { for (let i = 0; i < q.src.length; i++) await q.load(i); })(); });
   });
   setTimeout(() => loader.classList.add('done'), 6000);
 
@@ -91,6 +91,7 @@
     Object.values(LAYERS).forEach(layoutLayer);
     const vh = innerHeight;
     const dripTop = yOf(LAYERS.pour, 0.43);
+    $('#L-pour').style.setProperty('--steamY', (dripTop - 190) + 'px');
     const impact = yOf(LAYERS.drop, 0.555);
     ripples.style.top = impact + 'px';
     bub.style.top = (impact + vh * 0.06) + 'px';
@@ -150,13 +151,20 @@
       .from('.s3 .script', { opacity: 0, x: 30, duration: 0.4 }, 4.7)
       .from('.s3 .stats>div', { opacity: 0, y: 20, duration: 0.35, stagger: 0.08 }, 4.6)
       .to(st, { t: 92, g: 18, m: 210, duration: 1.2, onUpdate: renderStats, ease: 'power1.out' }, 4.6)
+      .to(pourSeq, { f: 84, duration: 2.3, onUpdate: () => pourSeq.draw() }, 3.95)
+      .fromTo('#L-pour canvas', { scale: 1.0 }, { scale: 1.07, duration: 2.1, transformOrigin: '57% 45%' }, 4.0)
+      .fromTo('.steam', { opacity: 0, y: 30 }, { opacity: 0.8, y: -40, duration: 1.4 }, 4.3)
+      .to('.steam', { opacity: 0, y: -90, duration: 0.6 }, 5.7)
       .to(thread, { opacity: 0.9, duration: 0.2, onStart: () => thread.className = 'thread', onReverseComplete: () => thread.className = 'thread grounds' }, 4.5)
+      .to(thread, { opacity: 0, duration: 0.4 }, 4.9)
     // match cut → EVERY DROP (follow the stream down through the carafe)
       .to('.s3', { opacity: 0, y: -50, duration: 0.4 }, 5.9)
       .to(thread, { scaleY: 1, opacity: 1, duration: 0.3, onStart: () => thread.className = 'thread amber', onReverseComplete: () => thread.className = 'thread' }, 5.95)
       .to('#L-pour', { yPercent: -70, scale: 1.08, duration: XF * 2 + .2, ease: 'power1.inOut' }, 6.0)
       .fromTo('#L-drop', { opacity: 0, yPercent: 70 }, { opacity: 1, yPercent: 0, duration: XF * 2 + .2, ease: 'power1.inOut' }, 6.0)
       .to(thread, { opacity: 0, duration: 0.3 }, 6.6)
+      .to(dropSeq, { f: 84, duration: 2.2, onUpdate: () => dropSeq.draw() }, 6.2)
+      .fromTo('#L-drop canvas', { scale: 1.08 }, { scale: 1, duration: 2.2, transformOrigin: '50% 55%' }, 6.2)
       .fromTo('#ripples,#bubbles', { opacity: 0 }, { opacity: 1, duration: 0.4 }, 6.5)
       .fromTo('.s4', { opacity: 0 }, { opacity: 1, duration: 0.01 }, 6.5)
       .fromTo('.drop-title', { filter: 'blur(18px)', opacity: 0, scale: 1.12 }, { filter: 'blur(0px)', opacity: 1, scale: 1, duration: 0.7, ease: 'power2.out' }, 6.5)
@@ -167,6 +175,8 @@
       .to('.s4', { yPercent: -38, opacity: 0, filter: 'blur(4px)', duration: 0.8, ease: 'power1.in' }, 8.0)
       .to('#ripples,#bubbles', { opacity: 0, duration: 0.4 }, 8.0)
       .fromTo('#L-cup', { opacity: 0, scale: 1.3 }, { opacity: 1, scale: 1, duration: XF * 2 + .3, ease: 'power2.out' }, 8.0)
+      .fromTo('#L-cup img', { scale: 1, rotation: 0 }, { scale: 1.08, rotation: -2.5, yPercent: -2, duration: 2.3, transformOrigin: '51% 50%' }, 8.0)
+      .fromTo('#L-cup .shade', { xPercent: -6 }, { xPercent: 6, duration: 2.3 }, 8.0)
       .to('#L-drop', { opacity: 0, scale: 0.9, duration: XF * 2 + .3 }, 8.15)
     // 04 THE RITUAL — product cards reuse the journey frames
       .fromTo('.s5', { opacity: 0 }, { opacity: 1, duration: 0.01 }, 8.7)
